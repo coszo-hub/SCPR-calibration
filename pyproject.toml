@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scpr-correct"
+version = "0.1.0"
+description = "Drift-correct Axial Seamount SCPR pressure MiniSEED (OO.AXCC1) with the instrument's in-situ calibrations"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.22", "obspy>=1.3"]
+authors = [{ name = "COSZO: Cascadia Subduction Zone Observatory" }]
+
+[project.urls]
+Source = "https://github.com/coszo-hub/SCPR-calibration"
+Pipeline = "https://github.com/Axial-Seamount/self-calibrating-pressure"
+
+[project.scripts]
+scpr-correct = "scpr_correct.cli:main"
+
+[tool.setuptools.package-data]
+scpr_correct = ["data/*.json"]
