@@ -1,4 +1,4 @@
-"""Drift-correct SCPR gauge pressure (OO.AXCC1 LDO, loc 40 = PARO1, 41 = PARO2).
+"""Drift-correct SCPR gauge pressure (LDO) of one station, e.g. OO.AXCC1 loc 40 = PARO1, 41 = PARO2.
 
 corrected = raw - drift(t), written as data quality Q. Calibrations are removed: from
 mask_before_s before the calibration flag (40.LEF = 1) or the pressure dropping below the
@@ -13,9 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 import numpy as np
 from obspy import Stream, Trace, UTCDateTime
 
-from .drift import LOC_GAUGE, DriftModel
-
-NETWORK, STATION = "OO", "AXCC1"
+from .drift import DriftModel
 
 
 def _times(tr: Trace) -> np.ndarray:
@@ -32,7 +30,7 @@ def _concat(st: Stream) -> tuple[np.ndarray, np.ndarray]:
 def mask_intervals(ft: np.ndarray, flag: np.ndarray, pt: np.ndarray, p: np.ndarray,
                    threshold: float, before: float, after: float) -> np.ndarray:
     """(start, end) epochs to drop: LEF = 1 or pressure below threshold, padded."""
-    bad = np.sort(np.concatenate([ft[flag > 0], pt[p < threshold]]))
+    bad = np.sort(np.concatenate([ft[flag > 0], pt[p < threshold]])) if len(p) else np.sort(ft[flag > 0])
     if not len(bad):
         return np.empty((0, 2))
     breaks = np.flatnonzero(np.diff(bad) > 60.0)
@@ -55,23 +53,26 @@ def in_intervals(t: np.ndarray, intervals: np.ndarray) -> np.ndarray:
 
 
 def correct_stream(st: Stream, model: DriftModel, settle_seconds: float | None = None) -> tuple[Stream, list[dict]]:
-    """Corrected LDO traces for every OO.AXCC1 LDO trace in `st` (loc 40/41).
+    """Corrected LDO traces for the model's station in `st` (its gauge locations, e.g. 40/41).
 
-    `st` should also hold 40.LEF (calibration flag) and, for calibrations that cross the edges
+    `st` should also hold the calibration flag (LEF) and, for calibrations that cross the edges
     of the period, the neighbouring hours; without LEF the pressure threshold alone defines
-    the calibrations. Returns (corrected stream, per-gauge statistics).
+    the calibrations. Traces of other stations are ignored. Returns (corrected stream,
+    per-gauge statistics).
     """
     after = model.mask_after_s if settle_seconds is None else settle_seconds
-    lef = st.select(network=NETWORK, station=STATION, location="40", channel="LEF")
+    net, sta = model.network, model.station
+    lef = st.select(network=net, station=sta, location=model.flag_location, channel="LEF")
     ft, flag = _concat(lef)
     out, stats = Stream(), []
-    for loc, gauge in LOC_GAUGE.items():
-        ldo = st.select(network=NETWORK, station=STATION, location=loc, channel="LDO")
+    for loc, gauge in sorted(model.location_gauge.items()):
+        ldo = st.select(network=net, station=sta, location=loc, channel="LDO")
         if not len(ldo):
             continue
         drift_model = model.gauges[gauge]
         pt, p = _concat(ldo)
-        masks = mask_intervals(ft, flag, pt, p, model.threshold_pa, model.mask_before_s, after)
+        threshold = model.threshold_pa if model.threshold_pa is not None else float(np.median(p)) - model.auto_drop_pa
+        masks = mask_intervals(ft, flag, pt, p, threshold, model.mask_before_s, after)
         n_in = n_mask = n_late = n_out = 0
         for tr in sorted(ldo, key=lambda x: x.stats.starttime):
             t = _times(tr)
@@ -89,14 +90,15 @@ def correct_stream(st: Stream, model: DriftModel, settle_seconds: float | None =
                 new.stats.mseed = {"dataquality": "Q"}
                 out.append(new)
                 n_out += b - a
-        stats.append({"gauge": gauge, "location": loc, "samples_in": n_in, "masked_calibration": n_mask,
-                      "past_valid_until": n_late, "written": n_out,
+        stats.append({"station": model.id, "gauge": gauge, "location": loc, "samples_in": n_in,
+                      "masked_calibration": n_mask, "past_valid_until": n_late, "written": n_out,
+                      "before_first_calibration": int(sum((_times(tr) < drift_model.t_first).sum() for tr in ldo)),
                       "provisional_samples": int(sum((_times(tr) > drift_model.t_last).sum() for tr in ldo))})
     return out, stats
 
 
-def split_days(st: Stream) -> dict[tuple[str, date], Stream]:
-    """{(location, UTC day): traces} with traces cut at midnight (no sample in two files)."""
+def split_days(st: Stream) -> dict[tuple[str, str, str, date], Stream]:
+    """{(network, station, location, UTC day): traces}, cut at midnight (no sample in two files)."""
     days: dict[tuple[str, date], Stream] = {}
     for tr in st:
         t = _times(tr)
@@ -106,25 +108,25 @@ def split_days(st: Stream) -> dict[tuple[str, date], Stream]:
             piece = tr.copy()
             piece.data = tr.data[idx[0]:idx[-1] + 1]
             piece.stats.starttime = tr.stats.starttime + idx[0] / tr.stats.sampling_rate
-            key = (tr.stats.location, (datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(days=int(d))).date())
+            key = (tr.stats.network, tr.stats.station, tr.stats.location,
+                   (datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(days=int(d))).date())
             days.setdefault(key, Stream()).append(piece)
     return days
 
 
-def sds_path(root, loc: str, cha: str, day: date):
+def sds_path(root, net: str, sta: str, loc: str, cha: str, day: date):
     from pathlib import Path
     doy = day.timetuple().tm_yday
-    return Path(root) / f"{day.year}" / NETWORK / STATION / f"{cha}.D" / \
-        f"{NETWORK}.{STATION}.{loc}.{cha}.D.{day.year}.{doy:03d}"
+    return Path(root) / f"{day.year}" / net / sta / f"{cha}.D" / f"{net}.{sta}.{loc}.{cha}.D.{day.year}.{doy:03d}"
 
 
 def write_sds(st: Stream, root, days: set[date] | None = None, reclen: int = 512) -> list:
     """Write corrected traces as one file per gauge per UTC day (SDS layout, like the pipeline)."""
     written = []
-    for (loc, day), part in sorted(split_days(st).items()):
+    for (net, sta, loc, day), part in sorted(split_days(st).items()):
         if days is not None and day not in days:
             continue
-        path = sds_path(root, loc, "LDO", day)
+        path = sds_path(root, net, sta, loc, "LDO", day)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".part")
         part.write(str(tmp), format="MSEED", reclen=reclen)

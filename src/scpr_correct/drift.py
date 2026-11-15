@@ -1,11 +1,12 @@
 """The SCPR gauge drift curves, evaluated from the published drift model.
 
-The drift model is fitted by the processing pipeline
-(https://github.com/Axial-Seamount/self-calibrating-pressure, `scpr_calibrate.py model`)
-from every in-situ calibration since 2018 and published every day as
-`SCPR-data-collection/calibration/drift_model.json` (default calibration averaging) and
-`drift_model_masked.json` (masked averaging). This module reads that file and evaluates,
-for each gauge, exactly what the pipeline subtracts:
+Each station's drift model is fitted by the COSZO SCPR pipeline
+(https://github.com/coszo-hub/self-calibrating-pressure) from every in-situ calibration of
+that station and published daily as
+`SCPR-data-collection/calibration/<NET>.<STA>/drift_model.json` (default calibration
+averaging) and `drift_model_masked.json` (masked averaging). The file names its station and
+which location holds which gauge. This module reads it and evaluates, for each gauge,
+exactly what the pipeline subtracts:
 
   drift(t) = curve(t) - reference
     curve:     a + b*d + c*exp(-d/tau)   (d = days since the first calibration)
@@ -27,11 +28,19 @@ import urllib.request
 import numpy as np
 from obspy import UTCDateTime
 
-RAW_BASE = ("https://raw.githubusercontent.com/Axial-Seamount/self-calibrating-pressure/main/"
-            "SCPR-data-collection/calibration/")
+# Where each station's calibration record is published (the pipeline repository).
+CALIBRATION_URL = ("https://raw.githubusercontent.com/coszo-hub/self-calibrating-pressure/main/"
+                   "SCPR-data-collection/calibration/{station_id}/{name}")
+# AXCC1 was first published from the Axial Seamount repository; used if the above is unreachable.
+LEGACY_URLS = {"OO.AXCC1": "https://raw.githubusercontent.com/Axial-Seamount/self-calibrating-pressure/main/"
+                           "SCPR-data-collection/calibration/{name}"}
 MODEL_FILES = {"glenn": "drift_model.json", "masked": "drift_model_masked.json"}
-GAUGE_LOC = {"PARO1": "40", "PARO2": "41"}
-LOC_GAUGE = {v: k for k, v in GAUGE_LOC.items()}
+DEFAULT_NETWORK = "OO"
+
+
+def station_id(station: str) -> str:
+    """'AXCC1' or 'OO.AXCC1' -> 'OO.AXCC1'."""
+    return station if "." in station else f"{DEFAULT_NETWORK}.{station}"
 
 
 def _epoch(text: str) -> float:
@@ -108,44 +117,84 @@ class GaugeDrift:
 
 @dataclass
 class DriftModel:
+    network: str
+    station: str
     gauges: dict[str, GaugeDrift]
+    gauge_location: dict[str, str]          # gauge -> location code
+    flag_location: str                      # calibration flag (LEF) location
     table_version: str
     offsets: str
     source: str
     mask_before_s: float
     mask_after_s: float
-    threshold_pa: float
+    threshold_pa: float | None              # None = auto (median - auto_drop_pa)
+    auto_drop_pa: float
+
+    @property
+    def id(self) -> str:
+        return f"{self.network}.{self.station}"
+
+    @property
+    def location_gauge(self) -> dict[str, str]:
+        return {loc: g for g, loc in self.gauge_location.items()}
 
     @classmethod
     def from_dict(cls, report: dict, source: str) -> "DriftModel":
         mask = report.get("mask", {})
-        return cls(gauges={g["gauge"]: GaugeDrift.from_report(g) for g in report["gauges"]},
+        # The station block says what the file applies to; files from before it existed are AXCC1's.
+        st = report.get("station") or {"network": "OO", "station": "AXCC1",
+                                       "gauges": [{"gauge": "PARO1", "location": "40"},
+                                                  {"gauge": "PARO2", "location": "41"}],
+                                       "calibration_flag": {"location": "40", "channel": "LEF"}}
+        thr = mask.get("threshold_pa", 15400e3)
+        return cls(network=st["network"], station=st["station"],
+                   gauges={g["gauge"]: GaugeDrift.from_report(g) for g in report["gauges"]},
+                   gauge_location={g["gauge"]: str(g["location"]) for g in st["gauges"]},
+                   flag_location=str(st.get("calibration_flag", {}).get("location", "40")),
                    table_version=report.get("table_version", "?"), offsets=report.get("offsets", "glenn"),
                    source=source, mask_before_s=float(mask.get("before_s", 60.0)),
                    mask_after_s=float(mask.get("after_s", 1800.0)),
-                   threshold_pa=float(mask.get("threshold_pa", 15400e3)))
+                   threshold_pa=None if thr in (None, "auto") else float(thr),
+                   auto_drop_pa=float(mask.get("auto_drop_pa", 100e3)))
 
     @classmethod
-    def load(cls, source: str = "latest", offsets: str = "glenn", timeout: float = 20.0) -> "DriftModel":
-        """source: "latest" (GitHub, falls back to the bundled copy when offline), "bundled",
-        or a path / URL to a drift_model JSON file."""
-        name = MODEL_FILES[offsets]
-        if source in ("latest", "bundled"):
-            if source == "latest":
+    def load(cls, station: str = "AXCC1", source: str = "latest", offsets: str = "glenn",
+             timeout: float = 20.0) -> "DriftModel":
+        """The calibration record of `station` ("AXCC1" or "OO.AXCC1").
+
+        source: "latest" (from the pipeline repository; falls back to the copy bundled with this
+        package when offline), "bundled", or a path / URL to a drift_model JSON file.
+        """
+        sid, name = station_id(station), MODEL_FILES[offsets]
+        if source not in ("latest", "bundled"):
+            if source.startswith(("http://", "https://")):
+                with urllib.request.urlopen(source, timeout=timeout) as r:
+                    return cls.from_dict(json.loads(r.read().decode()), source)
+            return cls.from_dict(json.loads(Path(source).read_text()), str(source))
+        if source == "latest":
+            for template in (CALIBRATION_URL, LEGACY_URLS.get(sid)):
+                if template is None:
+                    continue
+                url = template.format(station_id=sid, name=name)
                 try:
-                    with urllib.request.urlopen(RAW_BASE + name, timeout=timeout) as r:
-                        return cls.from_dict(json.loads(r.read().decode()), RAW_BASE + name)
+                    with urllib.request.urlopen(url, timeout=timeout) as r:
+                        return cls.from_dict(json.loads(r.read().decode()), url)
                 except OSError:
-                    pass                                         # offline: the bundled snapshot
-            text = resources.files("scpr_correct").joinpath("data", name).read_text()
-            return cls.from_dict(json.loads(text), f"bundled {name}")
-        if source.startswith(("http://", "https://")):
-            with urllib.request.urlopen(source, timeout=timeout) as r:
-                return cls.from_dict(json.loads(r.read().decode()), source)
-        return cls.from_dict(json.loads(Path(source).read_text()), str(source))
+                    continue                                     # not published there / offline
+        bundled = resources.files("scpr_correct").joinpath("data", sid, name)
+        if not bundled.is_file():
+            raise LookupError(f"no calibration record for {sid}: none published yet at "
+                              f"{CALIBRATION_URL.format(station_id=sid, name=name)} and none bundled. "
+                              f"A station's record starts with its first calibration.")
+        return cls.from_dict(json.loads(bundled.read_text()), f"bundled {sid}/{name}")
+
+    def coverage(self) -> tuple[float, float, float]:
+        """(first calibration, last calibration, corrected-until) epochs (first gauge)."""
+        g = next(iter(self.gauges.values()))
+        return g.t_first, g.t_last, g.t_valid
 
     def describe(self) -> str:
-        g = self.gauges["PARO1"]
-        return (f"drift model {self.source} (table {self.table_version}, averaging {self.offsets}; "
-                f"last calibration {UTCDateTime(g.t_last).isoformat()[:10]}, "
-                f"corrected until {UTCDateTime(g.t_valid).isoformat()[:10]})")
+        first, last, valid = self.coverage()
+        return (f"{self.id} calibration record {self.source} (table {self.table_version}, averaging "
+                f"{self.offsets}; calibrations {UTCDateTime(first).isoformat()[:10]} .. "
+                f"{UTCDateTime(last).isoformat()[:10]}, corrected until {UTCDateTime(valid).isoformat()[:10]})")

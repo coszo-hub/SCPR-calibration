@@ -1,4 +1,35 @@
 {
+  "station": {
+    "network": "OO",
+    "station": "AXCC1",
+    "site": "Axial Seamount central caldera",
+    "ref_des": "SCPRAA301",
+    "deployed": "2018-07-06",
+    "position": {
+      "latitude": 45.9548288,
+      "longitude": -130.00924,
+      "elevation_m": -1530.1,
+      "source": "OOI Regional Cabled Array"
+    },
+    "gauges": [
+      {
+        "gauge": "PARO1",
+        "location": "40",
+        "channel": "LDO",
+        "serial": "136576"
+      },
+      {
+        "gauge": "PARO2",
+        "location": "41",
+        "channel": "LDO",
+        "serial": "132123"
+      }
+    ],
+    "calibration_flag": {
+      "location": "40",
+      "channel": "LEF"
+    }
+  },
   "table_version": "3a0bedc3aa5d",
   "method": "fit",
   "offsets": "masked",
@@ -14,7 +45,8 @@
   "mask": {
     "before_s": 60.0,
     "after_s": 1800.0,
-    "threshold_pa": 15400000.0
+    "threshold_pa": 15400000.0,
+    "auto_drop_pa": 100000.0
   },
   "gauges": [
     {
