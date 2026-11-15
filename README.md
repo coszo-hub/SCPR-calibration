@@ -19,8 +19,8 @@ pipeline, [coszo-hub/self-calibrating-pressure](https://github.com/coszo-hub/sel
 | Station | Site | Calibration record |
 |---|---|---|
 | OO.AXCC1 | Axial Seamount central caldera | since 2018-07-09 |
-| OO.CZMID | Mid Slope | starts with its first calibration (deployment 2026) |
-| OO.CZOFF | Oregon Offshore | starts with its first calibration (deployment 2026) |
+| OO.CZMID | Mid Slope | starts with its first calibration (deployment planned summer 2027) |
+| OO.CZOFF | Oregon Offshore | starts with its first calibration (deployment planned summer 2027) |
 
 ## Use it from a clone
 
