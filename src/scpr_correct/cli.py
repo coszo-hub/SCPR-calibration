@@ -88,8 +88,8 @@ def day_report(model: DriftModel, corrected: Stream, raw: Stream, day: date) -> 
         if n_raw < 86400:
             notes.append(f"{86400 - n_raw} s missing in the raw data (gaps)")
         if lo >= valid:
-            notes.append(f"NOT CORRECTED: after {UTCDateTime(valid).date} the drift is too uncertain "
-                         f"(last calibration {UTCDateTime(last).date})")
+            notes.append(f"NOT CORRECTED: after {UTCDateTime(valid).date}, too long since the last calibration "
+                         f"({UTCDateTime(last).date})")
         elif hi > valid:
             notes.append(f"corrected only until {UTCDateTime(valid).isoformat()[:19]}")
         elif hi > last:
@@ -130,8 +130,9 @@ def main(argv: list[str] | None = None) -> int:
         now = UTCDateTime().timestamp
         for g, d in model.gauges.items():
             drift = float(d.delta([now])[0])
-            state = (f"drift now {drift:.0f} Pa (1 sigma {float(d.sigma([now])[0]):.0f} Pa)" if drift == drift
-                     else f"not corrected now: drift too uncertain since {UTCDateTime(d.t_valid).date}")
+            state = (f"drift now {drift:.0f} Pa (1 sigma {float(d.sigma([now])[0]):.0f} Pa)"
+                     + (" PROVISIONAL (after the last calibration)" if now > d.t_last else "") if drift == drift
+                     else f"not corrected now: too long since the last calibration (after {UTCDateTime(d.t_valid).date})")
             print(f"  {g} (loc {model.gauge_location[g]}): {d.kind}; {state}")
         return 0
 

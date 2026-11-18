@@ -40,10 +40,10 @@ Needs Python ≥ 3.9 with NumPy and ObsPy (`conda install -c conda-forge obspy`)
 4. reports, per gauge and day, what it did — and what is missing:
 
 ```
-OO.AXCC1 calibration record … (calibrations 2018-07-09 .. 2026-02-05, corrected until 2026-08-21)
+OO.AXCC1 calibration record … (calibrations 2018-07-09 .. 2026-02-05, corrected until 2027-02-05)
   2020-05-04 OO.AXCC1.40 PARO1: 83197 of 86400 samples corrected; 3203 s removed around a calibration
   2026-05-10 OO.AXCC1.40 PARO1: 86400 of 86400 samples corrected; PROVISIONAL: after the last calibration …
-  2026-10-01 OO.AXCC1.40 PARO1: 0 of 86400 samples corrected; NOT CORRECTED: after 2026-08-21 the drift is too uncertain …
+  2027-03-01 OO.AXCC1.40 PARO1: 0 of 86400 samples corrected; NOT CORRECTED: more than a year after the last calibration …
   2024-08-28 OO.AXCC1.41 PARO2: NO DATA (nothing in the input / at the data centre for this day)
 ```
 
@@ -82,9 +82,9 @@ sigma = model.gauges["PARO1"].sigma(times)    # its 1-sigma uncertainty (Pa)
   Every run prints the calibration-table version it used.
 * **Drift curve** per gauge: `a + b·t + c·exp(−t/τ)` through the calibrations, zero at the first
   calibration. After the last calibration it follows a line through the last four, so recent
-  data are **provisional** until the next calibration; once the drift uncertainty
-  `σ = √(40² + (170 Pa/yr · years since the last calibration)²)` exceeds 100 Pa (~200 days) the
-  data are **not corrected** (left out, and reported). Before the first calibration the drift is
+  data are **provisional** until the next calibration, with the drift uncertainty
+  `σ = √(40² + (170 Pa/yr · years since the last calibration)²)` (~138 Pa after 9 months). More
+  than a year after the last calibration the data are **not corrected** (left out, and reported). Before the first calibration the drift is
   held at its first value.
 * **Calibrations removed:** from 60 s before the calibration flag (`LEF` = 1) or the pressure
   dropping below the station's calibration threshold, to 30 min after (`--settle-seconds`).

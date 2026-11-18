@@ -13,7 +13,7 @@ exactly what the pipeline subtracts:
                after the last calibration: a weighted line through the last events,
                tapered in from the curve over the last calibration interval
     before the first calibration: held at its value there
-    after valid_until (drift uncertainty > 100 Pa): undefined (NaN) - not corrected
+    after valid_until (a year after the last calibration): undefined (NaN) - not corrected
   sigma(t) = sqrt(sigma0^2 + (rate * years since the last calibration)^2)
 """
 
